@@ -20,6 +20,7 @@ CosmosVote enables DAOs, protocols, and communities to create proposals, cast to
 - [Project Structure](#project-structure)
 - [Governance Contract Reference](#governance-contract-reference)
 - [Token Contract Reference](#token-contract-reference)
+- [Treasury Contract Reference](#treasury-contract-reference)
 - [Proposal Lifecycle](#proposal-lifecycle)
 - [Storage & Data Structures](#storage--data-structures)
 - [Configuration](#configuration)
@@ -425,6 +426,56 @@ pub fn get_delegated_weight(env: Env, voter: Address, delegators: Vec<Address>) 
 ```
 
 See [docs/delegation.md](./docs/delegation.md) for the full delegation model and behavior.
+
+---
+
+## Treasury Contract Reference
+
+The treasury contract holds XLM and SEP-41 tokens on behalf of the DAO. Only
+the governance contract may disburse funds, triggered when a passed proposal
+is executed.
+
+### Initialization
+
+```rust
+pub fn initialize(env: Env, governance: Address)
+```
+
+**Parameters:**
+- `governance` — The governance contract address; the sole authorized caller of `disburse`
+
+### Disburse
+
+```rust
+pub fn disburse(env: Env, action: TreasuryAction)
+```
+
+Transfers funds to a recipient. Only callable by the governance contract.
+
+### Query
+
+```rust
+pub fn governance(env: Env) -> Address
+```
+
+Returns the stored governance address.
+
+### Types
+
+```rust
+pub enum Asset {
+    Native,           // Native XLM
+    Token(Address),   // SEP-41 token
+}
+
+pub struct TreasuryAction {
+    pub recipient: Address,
+    pub amount:    i128,
+    pub asset:     Asset,
+}
+```
+
+See [docs/api/treasury.md](./docs/api/treasury.md) for the full treasury API reference, including error codes and integration examples.
 
 ---
 
