@@ -34,7 +34,7 @@
     "eslint": "10.4.1",
     "eslint-plugin-react-hooks": "7.1.1",
     "license-checker": "25.0.1",
-    "typescript": "6.0.3",
+    "typescript": "7.0.2",
     "vite": "5.3.1",
     "vitest": "5.0.0"
   }
