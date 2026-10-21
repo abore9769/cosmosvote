@@ -12,6 +12,7 @@
     "lint": "eslint src --ext .ts,.tsx --report-unused-disable-directives --max-warnings 0",
     "type-check": "tsc --noEmit",
     "bundle-analyze": "vite build --mode analyze",
+    "check:sri": "node scripts/check-sri.mjs",
     "license-check": "license-checker --onlyAllow 'MIT;Apache-2.0;BSD-2-Clause;BSD-3-Clause;ISC;CC0-1.0;Unlicense;0BSD;Python-2.0' --excludePrivatePackages"
   },
   "dependencies": {

@@ -20,7 +20,7 @@ afterEach(() => jest.restoreAllMocks());
 const BASE_CONFIG = {
   rpcUrl: 'http://localhost:8000',
   contractId: 'CONTRACT_ABC',
-  webhookUrl: 'http://localhost:9000/hook',
+  webhookUrl: 'https://example.com/hook',
 };
 
 const makeEvent = (event = 'vote_cast'): WebhookPayload => ({
@@ -160,6 +160,65 @@ describe('deliverWebhook', () => {
     await expect(delivery).resolves.toBeUndefined();
     expect(mockedAxios.post).toHaveBeenCalledTimes(4);
     jest.useRealTimers();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SSRF prevention — blocked webhook URLs
+// ---------------------------------------------------------------------------
+
+describe('SSRF prevention', () => {
+  const blockedUrls = [
+    'https://localhost/hook',
+    'https://127.0.0.1/hook',
+    'https://169.254.169.254/latest/meta-data/',
+    'https://10.0.0.1/hook',
+    'https://10.255.255.255/hook',
+    'https://172.16.0.1/hook',
+    'https://172.31.255.255/hook',
+    'https://192.168.0.1/hook',
+    'https://192.168.1.100/hook',
+    'https://[::1]/hook',
+    'https://[fc00::1]/hook',
+    'https://[fe80::1]/hook',
+  ];
+
+  it.each(blockedUrls)('blocks delivery to private/loopback URL %s', async (webhookUrl) => {
+    const svc = new NotificationService({ ...BASE_CONFIG, webhookUrl });
+
+    await expect(svc.deliverWebhook(makeEvent())).resolves.toBeUndefined();
+    expect(mockedAxios.post).not.toHaveBeenCalled();
+  });
+
+  it('rejects non-HTTPS webhook URLs', async () => {
+    const svc = new NotificationService({ ...BASE_CONFIG, webhookUrl: 'http://example.com/hook' });
+
+    await expect(svc.deliverWebhook(makeEvent())).resolves.toBeUndefined();
+    expect(mockedAxios.post).not.toHaveBeenCalled();
+  });
+
+  it('still delivers to a public HTTPS URL', async () => {
+    mockedAxios.post.mockResolvedValueOnce({ status: 200 });
+
+    const svc = new NotificationService(BASE_CONFIG);
+    await svc.deliverWebhook(makeEvent());
+
+    expect(mockedAxios.post).toHaveBeenCalledWith(
+      BASE_CONFIG.webhookUrl,
+      expect.objectContaining({ event: 'vote_cast' }),
+      expect.objectContaining({ timeout: 5_000 })
+    );
+  });
+
+  it('does not deliver events to a blocked webhook URL during runOnce', async () => {
+    const events = [makeEvent('vote_cast')];
+    mockedAxios.post.mockResolvedValueOnce({ data: { events } });
+
+    const svc = new NotificationService({ ...BASE_CONFIG, webhookUrl: 'https://169.254.169.254/' });
+    await svc.runOnce();
+
+    // Only the poll call should have happened; webhook delivery is blocked.
+    expect(mockedAxios.post).toHaveBeenCalledTimes(1);
   });
 });
 

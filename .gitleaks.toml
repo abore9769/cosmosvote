@@ -1,0 +1,177 @@
+# Gitleaks configuration for the project.
+# Consumed by the secrets-scanning CI job (see .github/workflows/secrets-scan.yml).
+# False positives can be suppressed via .gitleaksignore (fingerprint based) or
+# by extending the allowlists below.
+
+title = "Project secrets scanning rules"
+
+# Scan the full git history on every run so that previously committed secrets
+# are also detected, not just the current working tree.
+[extend]
+useDefault = true
+
+# ---------------------------------------------------------------------------
+# Custom rules
+# ---------------------------------------------------------------------------
+
+[[rules]]
+id = "stellar-secret-key"
+description = "Stellar secret key (S...)"
+regex = '''\bS[A-Z2-7]{55}\b'''
+entropy = 3.5
+keywords = ["S"]
+[rules.allowlist]
+description = "Allow known test fixtures / placeholder Stellar keys"
+regexes = [
+  '''S[A-Z2-7]{55}''',
+]
+paths = [
+  '''(^|/)test(s)?/''',
+  '''(^|/)__tests__/''',
+  '''(^|/)fixtures?/''',
+  '''(^|/)mocks?/''',
+  '''\.(test|spec)\.[jt]sx?$''',
+  '''(^|/)\.env\.example$''',
+]
+
+[[rules]]
+id = "stellar-secret-key-assignment"
+description = "Stellar secret key assigned to a variable"
+regex = '''(?i)(?:stellar[_-]?(?:secret|private)[_-]?key|secret[_-]?key|secretKey|STELLAR_SECRET(?:_KEY)?)\s*[:=]\s*['"]?(S[A-Z2-7]{55})['"]?'''
+secretGroup = 1
+entropy = 3.5
+keywords = ["secret", "stellar", "SECRET"]
+[rules.allowlist]
+description = "Allow placeholders and test fixtures"
+regexes = [
+  '''(?i)(?:example|placeholder|dummy|sample|fake|redacted|changeme|your[_-]?secret)''',
+]
+paths = [
+  '''(^|/)test(s)?/''',
+  '''(^|/)__tests__/''',
+  '''(^|/)fixtures?/''',
+  '''(^|/)mocks?/''',
+  '''\.(test|spec)\.[jt]sx?$''',
+  '''(^|/)\.env\.example$''',
+]
+
+[[rules]]
+id = "generic-api-token"
+description = "Generic API token / access key assignment"
+regex = '''(?i)(?:api[_-]?key|api[_-]?token|access[_-]?token|auth[_-]?token|secret[_-]?token|client[_-]?secret|private[_-]?key)\s*[:=]\s*['"]?([A-Za-z0-9_\-\.\/+=]{16,})['"]?'''
+secretGroup = 1
+entropy = 3.5
+keywords = ["api_key", "apikey", "api_token", "access_token", "auth_token", "secret_token", "client_secret", "private_key"]
+[rules.allowlist]
+description = "Allow placeholders, env var references and test fixtures"
+regexes = [
+  '''(?i)(?:example|placeholder|dummy|sample|fake|redacted|changeme|your[_-]?(?:api|token|key)|xxx+|todo)''',
+  '''^\$\{[^}]+\}$''',
+  '''^process\.env\.''',
+]
+paths = [
+  '''(^|/)test(s)?/''',
+  '''(^|/)__tests__/''',
+  '''(^|/)fixtures?/''',
+  '''(^|/)mocks?/''',
+  '''\.(test|spec)\.[jt]sx?$''',
+  '''(^|/)\.env\.example$''',
+]
+
+[[rules]]
+id = "jwt-secret"
+description = "JWT secret / signing key"
+regex = '''(?i)(?:jwt[_-]?(?:secret|key|signing[_-]?key)|jwtSecret|JWT_SECRET)\s*[:=]\s*['"]?([A-Za-z0-9_\-\.\/+=]{8,})['"]?'''
+secretGroup = 1
+entropy = 3.0
+keywords = ["jwt_secret", "jwtsecret", "jwt_secret", "jwt_key", "JWT_SECRET", "signing_key"]
+[rules.allowlist]
+description = "Allow placeholders, env var references and test fixtures"
+regexes = [
+  '''(?i)(?:example|placeholder|dummy|sample|fake|redacted|changeme|your[_-]?jwt|secret)''',
+  '''^\$\{[^}]+\}$''',
+  '''^process\.env\.''',
+]
+paths = [
+  '''(^|/)test(s)?/''',
+  '''(^|/)__tests__/''',
+  '''(^|/)fixtures?/''',
+  '''(^|/)mocks?/''',
+  '''\.(test|spec)\.[jt]sx?$''',
+  '''(^|/)\.env\.example$''',
+]
+
+[[rules]]
+id = "jwt-token"
+description = "Hardcoded JSON Web Token"
+regex = '''\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b'''
+entropy = 3.5
+keywords = ["eyJ"]
+[rules.allowlist]
+description = "Allow test fixtures"
+paths = [
+  '''(^|/)test(s)?/''',
+  '''(^|/)__tests__/''',
+  '''(^|/)fixtures?/''',
+  '''(^|/)mocks?/''',
+  '''\.(test|spec)\.[jt]sx?$''',
+]
+
+[[rules]]
+id = "database-connection-string"
+description = "Database connection string with embedded credentials"
+regex = '''(?i)\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis|rediss|amqp|mssql|sqlserver)://[^\s:@/]+:[^\s:@/]+@[^\s'"]+'''
+entropy = 3.0
+keywords = ["postgres://", "postgresql://", "mysql://", "mariadb://", "mongodb://", "mongodb+srv://", "redis://", "rediss://", "amqp://", "mssql://", "sqlserver://"]
+[rules.allowlist]
+description = "Allow placeholders, env var references and test fixtures"
+regexes = [
+  '''(?i)(?:example|placeholder|dummy|sample|fake|redacted|changeme|user:pass|username:password)''',
+  '''\$\{[^}]+\}''',
+]
+paths = [
+  '''(^|/)test(s)?/''',
+  '''(^|/)__tests__/''',
+  '''(^|/)fixtures?/''',
+  '''(^|/)mocks?/''',
+  '''\.(test|spec)\.[jt]sx?$''',
+  '''(^|/)\.env\.example$''',
+]
+
+[[rules]]
+id = "private-key-block"
+description = "PEM private key block"
+regex = '''-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----'''
+keywords = ["BEGIN", "PRIVATE KEY"]
+[rules.allowlist]
+description = "Allow test fixtures"
+paths = [
+  '''(^|/)test(s)?/''',
+  '''(^|/)__tests__/''',
+  '''(^|/)fixtures?/''',
+  '''(^|/)mocks?/''',
+]
+
+# ---------------------------------------------------------------------------
+# Global allowlists
+# ---------------------------------------------------------------------------
+
+[allowlist]
+description = "Global allowlist for known false positives"
+paths = [
+  '''(^|/)\.gitleaks\.toml$''',
+  '''(^|/)\.gitleaksignore$''',
+  '''(^|/)package-lock\.json$''',
+  '''(^|/)yarn\.lock$''',
+  '''(^|/)pnpm-lock\.yaml$''',
+  '''(^|/)go\.sum$''',
+  '''(^|/)Cargo\.lock$''',
+  '''(^|/)\.env\.example$''',
+  '''(^|/)node_modules/''',
+  '''(^|/)vendor/''',
+  '''(^|/)dist/''',
+  '''(^|/)build/''',
+]
+regexes = [
+  '''(?i)(?:example|placeholder|dummy|sample|fake|redacted|changeme|your[_-]?(?:secret|key|token))''',
+]

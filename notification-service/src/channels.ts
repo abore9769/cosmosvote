@@ -27,6 +27,7 @@ import nodemailer from 'nodemailer';
 import axios from 'axios';
 import type { GovernanceEvent, Subscriber } from './types';
 import { renderEmailNotification } from './emailTemplates';
+import { validateWebhookUrl, BlockedUrlError } from './ssrfGuard';
 
 // ── Plugin interface ──────────────────────────────────────────────────────────
 
@@ -71,6 +72,34 @@ function buildSubjectLine(event: GovernanceEvent): string {
     : `CosmosVote: proposal ${action}`;
 }
 
+/**
+ * Registration-time SSRF validation for every subscriber-supplied webhook URL.
+ * Throws a BlockedUrlError (403-mappable) when any URL is unsafe.
+ */
+export function validateChannelUrls(subscriber: Subscriber): void {
+  const urls: Array<string | undefined> = [
+    subscriber.webhookUrl,
+    subscriber.slackWebhookUrl,
+    subscriber.discordWebhookUrl,
+  ];
+  for (const url of urls) {
+    if (url) validateWebhookUrl(url);
+  }
+}
+
+/**
+ * Delivery-time SSRF validation. Re-resolves the hostname immediately before
+ * the request to defeat DNS rebinding. Throws a BlockedUrlError on failure.
+ */
+async function assertDeliverable(url: string): Promise<void> {
+  try {
+    await validateWebhookUrl(url);
+  } catch (err) {
+    if (err instanceof BlockedUrlError) throw err;
+    throw new BlockedUrlError(url, (err as Error)?.message ?? 'URL validation failed');
+  }
+}
+
 // ── Email channel ─────────────────────────────────────────────────────────────
 
 const transporter = nodemailer.createTransport({
@@ -108,11 +137,14 @@ export const WebhookChannel: NotificationChannel = {
   name: 'webhook',
 
   isConfigured(subscriber) {
-    return !!subscriber.webhookUrl;
+    if (!subscriber.webhookUrl) return false;
+    validateWebhookUrl(subscriber.webhookUrl);
+    return true;
   },
 
   async send(subscriber, event) {
     if (!subscriber.webhookUrl) return;
+    await assertDeliverable(subscriber.webhookUrl);
     await axios.post(
       subscriber.webhookUrl,
       { event },
@@ -129,12 +161,16 @@ export const SlackChannel: NotificationChannel = {
   name: 'slack',
 
   isConfigured(subscriber) {
-    return !!(subscriber.slackWebhookUrl ?? process.env.SLACK_WEBHOOK_URL);
+    const url = subscriber.slackWebhookUrl ?? process.env.SLACK_WEBHOOK_URL;
+    if (!url) return false;
+    validateWebhookUrl(url);
+    return true;
   },
 
   async send(subscriber, event) {
     const url = subscriber.slackWebhookUrl ?? process.env.SLACK_WEBHOOK_URL;
     if (!url) return;
+    await assertDeliverable(url);
 
     const text = buildTextMessage(event);
     const emoji: Record<string, string> = {
@@ -173,12 +209,16 @@ export const DiscordChannel: NotificationChannel = {
   name: 'discord',
 
   isConfigured(subscriber) {
-    return !!(subscriber.discordWebhookUrl ?? process.env.DISCORD_WEBHOOK_URL);
+    const url = subscriber.discordWebhookUrl ?? process.env.DISCORD_WEBHOOK_URL;
+    if (!url) return false;
+    validateWebhookUrl(url);
+    return true;
   },
 
   async send(subscriber, event) {
     const url = subscriber.discordWebhookUrl ?? process.env.DISCORD_WEBHOOK_URL;
     if (!url) return;
+    await assertDeliverable(url);
 
     const text = buildTextMessage(event);
     await axios.post(

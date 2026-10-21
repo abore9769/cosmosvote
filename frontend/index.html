@@ -7,6 +7,12 @@
     <meta name="description" content="On-chain governance and voting on Stellar Soroban" />
     <link rel="manifest" href="/manifest.json" />
     <!--
+      SRI audit (Issue #123): all scripts and stylesheets are served from the
+      same origin (no external CDN resources are loaded). If an external
+      resource is ever added, it MUST include a pinned `integrity` (sha384)
+      hash and `crossorigin="anonymous"`; CI enforces this.
+    -->
+    <!--
       No-flash theme script (Issue #18):
       Reads localStorage before React hydrates so the correct data-theme is
       applied immediately, preventing a flash of the wrong theme on load.

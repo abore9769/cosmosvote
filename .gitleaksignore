@@ -1,0 +1,32 @@
+# Gitleaks ignore file
+#
+# This file lets you suppress *verified false positives* reported by gitleaks.
+# Each entry is a fingerprint in the form:
+#
+#     <commit>:<file>:<rule-id>:<line>
+#
+# You can find the exact fingerprint in the gitleaks report output (the
+# `Fingerprint` field) or by running gitleaks locally with `--report-format json`.
+#
+# Usage:
+#   1. Run the scanner locally to confirm the finding is a false positive:
+#        gitleaks detect --source . --report-format json --report-path report.json
+#   2. Copy the `Fingerprint` value for the finding you want to suppress.
+#   3. Add it below, one per line, with a short comment explaining *why* it is
+#      a false positive (e.g. "test fixture", "example placeholder", "public key").
+#
+# Guidelines:
+#   - Only suppress findings you have manually verified as false positives.
+#   - Prefer fixing the code (e.g. moving secrets to env vars) over suppressing.
+#   - Never suppress a real credential; rotate it immediately instead.
+#   - Keep entries specific (full fingerprint) rather than broad patterns.
+#
+# Example entries (commented out):
+#
+# # Test fixture: dummy Stellar secret key used only in unit tests
+# 0000000000000000000000000000000000000000:test/fixtures/keys.ts:stellar-secret-key:12
+#
+# # Documentation example: placeholder API token in README
+# 1111111111111111111111111111111111111111:docs/README.md:generic-api-key:45
+#
+# Add your verified false-positive fingerprints below this line.

@@ -6,6 +6,7 @@
 import axios from 'axios';
 import { captureError } from './errorTracking';
 import { logger } from './logger';
+import { validateWebhookUrl } from './webhookUrlValidator';
 import {
   notificationSentTotal,
   notificationFailedTotal,
@@ -48,6 +49,19 @@ export class NotificationService {
 
   constructor(private readonly config: NotificationServiceConfig) {
     activeSubscriptions.inc();
+    const validation = validateWebhookUrl(this.config.webhookUrl);
+    if (!validation.ok) {
+      logger.error(
+        {
+          event: 'webhook_url_blocked',
+          context: 'webhook-registration',
+          webhookUrl: this.config.webhookUrl,
+          reason: validation.reason,
+        },
+        'webhook URL rejected by SSRF guard'
+      );
+      throw new Error(`Blocked webhook URL: ${validation.reason}`);
+    }
   }
 
   async checkReadiness(): Promise<boolean> {
@@ -107,9 +121,28 @@ export class NotificationService {
 
   async deliverWebhook(payload: WebhookPayload): Promise<void> {
     for (let attempt = 0; attempt <= MAX_WEBHOOK_RETRIES; attempt += 1) {
+      const validation = validateWebhookUrl(this.config.webhookUrl);
+      if (!validation.ok) {
+        logger.error(
+          {
+            event: 'webhook_url_blocked',
+            context: 'webhook-delivery',
+            webhookUrl: this.config.webhookUrl,
+            eventType: payload.event,
+            reason: validation.reason,
+          },
+          'webhook delivery skipped: URL rejected by SSRF guard'
+        );
+        notificationFailedTotal.inc({ contract_id: this.config.contractId });
+        return;
+      }
+
       const end = webhookLatencySeconds.startTimer({ contract_id: this.config.contractId });
       try {
-        const response = await axios.post(this.config.webhookUrl, payload, { timeout: 5_000 });
+        const response = await axios.post(this.config.webhookUrl, payload, {
+          timeout: 5_000,
+          maxRedirects: 0,
+        });
         end({ status_code: String(response.status) });
         notificationSentTotal.inc({ contract_id: this.config.contractId });
         return;

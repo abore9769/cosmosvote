@@ -45,6 +45,7 @@ try {
 import { startWatcher, stopWatcher } from './watcher';
 import { addSubscriber, removeSubscriber, listSubscribers } from './subscriptions';
 import { GovernanceEventType } from './types';
+import { validateWebhookUrl } from './ssrf';
 
 const ALL_EVENTS: GovernanceEventType[] = ['created', 'voted', 'final', 'exec', 'cancel'];
 
@@ -153,6 +154,22 @@ async function main(): Promise<void> {
           'Use: --email <addr>, --webhook <url>, --slack <url>, or --discord <url>',
         );
         process.exit(1);
+      }
+
+      // SSRF prevention (issue #116): validate every webhook URL at
+      // registration time. Delivery-time validation is enforced separately.
+      const webhookChannels: Array<[string, string | undefined]> = [
+        ['--webhook', webhookUrl],
+        ['--slack', slackWebhookUrl],
+        ['--discord', discordWebhookUrl],
+      ];
+      for (const [flagName, url] of webhookChannels) {
+        if (!url) continue;
+        const result = await validateWebhookUrl(url);
+        if (!result.ok) {
+          console.error(`Error: ${flagName} URL rejected (403 Forbidden): ${result.reason}`);
+          process.exit(1);
+        }
       }
 
       const subscriber = addSubscriber({

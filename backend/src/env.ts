@@ -47,6 +47,12 @@ const envSchema = z.object({
 
   // ── CORS ──────────────────────────────────────────────────────────────────
   ALLOWED_ORIGINS: z.string().optional(),
+
+  // ── Audit log ─────────────────────────────────────────────────────────────
+  AUDIT_LOG_PATH: z
+    .string()
+    .min(1, 'AUDIT_LOG_PATH must not be empty')
+    .default('./data/audit.log'),
 });
 
 export type Env = z.infer<typeof envSchema>;

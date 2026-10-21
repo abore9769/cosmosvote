@@ -38,4 +38,30 @@ Reference them in workflows as `${{ secrets.SECRET_NAME }}`. Never `echo` secret
 
 ## Secret Scanning
 
-A `secret-scan` CI job runs on every push and pull request to detect common secret patterns (private key headers, Stellar secret keys starting with `S`, hardcoded tokens). See `.github/workflows/ci.yml`.
+A `secret-scan` CI job runs [gitleaks](https://github.com/gitleaks/gitleaks) on every push and pull request to detect committed secrets. The job is **required for merge** — a detected secret blocks the PR until it is removed from the code (and, if already pushed, from git history) and the secret is rotated.
+
+The rule set (configured in `.gitleaks.toml`) detects, among others:
+
+- **Stellar secret keys** — strings starting with `S` followed by 55 base32 characters (`S[A-Z2-7]{55}`).
+- **API tokens** — generic high-entropy tokens and known provider token formats.
+- **JWT secrets** — hardcoded signing keys and secret assignments.
+- **Database connection strings** — URIs containing embedded credentials (e.g. `postgres://user:pass@host`).
+- **Private key headers** — `-----BEGIN ... PRIVATE KEY-----` blocks.
+
+### Suppressing false positives
+
+If gitleaks flags a non-secret (e.g. a test fixture or documentation example), add a suppression entry to `.gitleaksignore` at the repository root instead of disabling the rule. Each entry is a finding fingerprint in the form `commit:file:rule-id:line`:
+
+```
+# .gitleaksignore
+# Example: placeholder key in docs
+abc123def456:docs/security/secret-management.md:stellar-secret-key:42
+```
+
+Get the fingerprint from the gitleaks output in the failed CI job, or run locally:
+
+```bash
+gitleaks detect --source . --report-format json --report-path gitleaks-report.json
+```
+
+Suppressions should be rare and reviewed — never add an entry to silence a real secret.
