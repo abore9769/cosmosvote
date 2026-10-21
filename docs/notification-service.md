@@ -48,6 +48,7 @@ Key variables:
 | `SMTP_PASS` | SMTP password |
 | `EMAIL_FROM` | Sender address for email notifications |
 | `SUBSCRIPTIONS_FILE` | Path to persisted subscriptions JSON (default: `./data/subscriptions.json`) |
+| `WEBHOOK_SIGNING_SECRET` | Shared secret used to HMAC-SHA256 sign webhook deliveries |
 
 ---
 

@@ -9,6 +9,7 @@ import {
   Keypair,
 } from '@stellar/stellar-sdk';
 import { config, ACTIVE_NETWORK } from '../config';
+import { sanitizeWalletMessage } from '../utils/sanitizeWalletMessage';
 
 interface Props {
   walletAddress: string;
@@ -171,6 +172,11 @@ export function CreateProposalForm({ walletAddress, onSuccess, onCancel }: Props
           ? Networks.PUBLIC
           : Networks.TESTNET;
 
+      // Sanitize all wallet-facing message fields to ASCII-safe characters only
+      // before they are embedded in the transaction (and shown by the wallet).
+      const safeTitle = sanitizeWalletMessage(form.title.trim(), 128);
+      const safeDescription = sanitizeWalletMessage(form.description.trim(), 1024);
+
       const tx = new TransactionBuilder(account, {
         fee: '1000000', // 0.1 XLM max fee — governance calls are compute-heavy
         networkPassphrase,
@@ -181,8 +187,8 @@ export function CreateProposalForm({ walletAddress, onSuccess, onCancel }: Props
             function: 'create_proposal',
             args: [
               nativeToScVal(walletAddress, { type: 'address' }),
-              nativeToScVal(form.title.trim(), { type: 'string' }),
-              nativeToScVal(form.description.trim(), { type: 'string' }),
+              nativeToScVal(safeTitle, { type: 'string' }),
+              nativeToScVal(safeDescription, { type: 'string' }),
               nativeToScVal(BigInt(Math.round(Number(form.quorum))), { type: 'i128' }),
               nativeToScVal(BigInt(Math.round(Number(form.duration))), { type: 'u64' }),
             ],
@@ -208,8 +214,11 @@ export function CreateProposalForm({ walletAddress, onSuccess, onCancel }: Props
       // Development / testnet path: ask for secret key via prompt.
       // Production path: integrate wallet extension SDK and replace this block.
       const secretKey = window.prompt(
-        '⚠️ Development mode: enter your Stellar secret key (S...) to sign this transaction.\n\n' +
-        'In production, connect a wallet extension (Freighter) instead.'
+        sanitizeWalletMessage(
+          'Development mode: enter your Stellar secret key (S...) to sign this transaction. ' +
+          'In production, connect a wallet extension (Freighter) instead.',
+          512,
+        )
       );
 
       if (!secretKey) {

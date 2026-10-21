@@ -10,6 +10,7 @@
  */
 
 import { useState, useCallback } from 'react';
+import { sanitizeWalletMessage } from '../utils/sanitizeWalletMessage';
 
 interface Props {
   onClose: () => void;
@@ -193,15 +194,29 @@ export function NewProposalForm({ onClose, onSuccess, onAnnounce, onError }: Pro
     setSubmitting(true);
     onAnnounce?.('Submitting proposal…');
 
+    // Issue #118: sanitize all wallet-facing message fields before they are
+    // used in the submission payload or any wallet-displayed message.
+    const payload = {
+      title: sanitizeWalletMessage(form.title),
+      description: sanitizeWalletMessage(form.description),
+      quorum: Number(form.quorum),
+      duration: Number(form.duration),
+    };
+
     try {
       // Placeholder: replace with real signed transaction when wallet integration is complete
       await new Promise(r => setTimeout(r, 800));
       const mockId = Date.now() % 10000;
-      onAnnounce?.(`Proposal submitted successfully. Redirecting to proposal #${mockId}.`);
+      // Only sanitized values are ever interpolated into wallet-facing messages.
+      onAnnounce?.(
+        sanitizeWalletMessage(
+          `Proposal "${payload.title}" submitted successfully. Redirecting to proposal #${mockId}.`
+        )
+      );
       onSuccess(mockId);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      onError?.(msg);
+      onError?.(sanitizeWalletMessage(msg));
       setSubmitting(false);
     }
   };

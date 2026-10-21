@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { WalletProvider, useWallet } from '../WalletContext';
 import * as freighter from '@stellar/freighter-api';
 import * as api from '../api';
+import { sanitizeWalletMessage } from '../walletMessage';
 
 // --------------------------------------------------------------------------
 // Test consumer component
@@ -110,5 +111,57 @@ describe('WalletContext / useWallet', () => {
 
     expect(screen.getByTestId('addr').textContent).toBe('null');
     expect(sessionStorage.getItem('cosmosvote-wallet-address')).toBeNull();
+  });
+});
+
+// --------------------------------------------------------------------------
+// Wallet-facing message sanitization (integration-style)
+// --------------------------------------------------------------------------
+describe('wallet message sanitization', () => {
+  it('sanitizes a malicious proposal title before wallet display', () => {
+    const maliciousTitle =
+      'Transfer\u0000 all funds\u0007 to attacker \u202Eevil\u202C \uD83D\uDE00 100%';
+
+    const raw = `Vote on proposal: ${maliciousTitle}`;
+    const sanitized = sanitizeWalletMessage(raw);
+
+    // No control characters survive
+    expect(sanitized).not.toMatch(/[\u0000-\u001F\u007F-\u009F]/);
+    // No non-ASCII characters survive
+    expect(sanitized).not.toMatch(/[^\x20-\x7E]/);
+    // No bidi override characters
+    expect(sanitized).not.toContain('\u202E');
+    expect(sanitized).not.toContain('\u202C');
+    // No emoji
+    expect(sanitized).not.toContain('\uD83D\uDE00');
+    // Readable ASCII content is preserved
+    expect(sanitized).toContain('Vote on proposal:');
+    expect(sanitized).toContain('all funds');
+    expect(sanitized).toContain('to attacker');
+  });
+
+  it('produces ASCII-only output for arbitrary Unicode input', () => {
+    const inputs = [
+      'café ☕ résumé',
+      'emoji 😀🎉🚀 everywhere',
+      'zero\u0000byte',
+      'bell\u0007tab\u0009newline\u000A',
+      'right-to-left \u202Eoverride',
+    ];
+
+    for (const input of inputs) {
+      const out = sanitizeWalletMessage(input);
+      expect(out).toMatch(/^[\x20-\x7E]*$/);
+    }
+  });
+
+  it('sanitizes wallet message fields built from frontend state', () => {
+    const proposalTitle = 'Fund \u0000the\u0007 treasury \uD83D\uDCB0';
+    const memo = sanitizeWalletMessage(`Proposal: ${proposalTitle}`);
+
+    expect(memo).toMatch(/^[\x20-\x7E]*$/);
+    expect(memo).not.toContain('\u0000');
+    expect(memo).not.toContain('\u0007');
+    expect(memo).not.toContain('\uD83D\uDCB0');
   });
 });
