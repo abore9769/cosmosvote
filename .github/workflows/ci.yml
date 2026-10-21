@@ -183,3 +183,11 @@ jobs:
         run: npm ci
       - name: Run coverage (fail below threshold)
         run: npm run coverage
+
+  env-example-check:
+    name: .env.example Completeness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Validate .env.example completeness
+        run: bash scripts/check_env_example.sh
