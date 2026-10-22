@@ -20,7 +20,7 @@
 import type { Proposal } from '../types';
 import { fetchHasVoted, fetchVoteRecord, fetchProposal } from '../api';
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { formatTokenAmount, maskAddress } from '../utils';
+import { formatTokenAmount, maskAddress, sanitizeWalletMessage } from '../utils';
 import { explorerAccountUrl } from '../config';
 import { usePolling } from '../hooks/usePolling';
 
@@ -216,6 +216,15 @@ export function ProposalDetail({ proposal: p, decimals, walletAddress, adminAddr
   const shortAddress = maskAddress(p.proposer);
   const hasChoices = Array.isArray(p.choices) && p.choices.length > 0;
 
+  // Wallet-facing message fields are sanitized to ASCII-safe characters so that
+  // frontend-supplied proposal content cannot inject misleading content into
+  // wallet prompts or vote memos (see docs/wallet-message-sanitization.md).
+  const safeTitle = sanitizeWalletMessage(p.title);
+  const safeDescription = sanitizeWalletMessage(p.description);
+  const safeChoices = hasChoices
+    ? (p.choices ?? []).map(choice => sanitizeWalletMessage(choice))
+    : [];
+
   // Submit a vote via the connected wallet. Signs and broadcasts a real Soroban transaction.
   async function handleVote(voteInput: VoteInput) {
     if (!canVote || !walletAddress) return;
@@ -227,10 +236,14 @@ export function ProposalDetail({ proposal: p, decimals, walletAddress, adminAddr
       setHasVoted(true);
       const voteLabel =
         typeof voteInput === 'object' && 'choice' in voteInput
-          ? (p.choices?.[voteInput.choice] ?? `Choice ${voteInput.choice}`)
+          ? (safeChoices[voteInput.choice] ?? `Choice ${voteInput.choice}`)
           : voteInput;
       setVoteRecord({ vote: voteLabel, weight: BigInt(0) });
-      setVoteConfirmation(`Your vote "${voteLabel}" on proposal #${String(p.id)} has been submitted.`);
+      setVoteConfirmation(
+        sanitizeWalletMessage(
+          `Your vote "${voteLabel}" on proposal #${String(p.id)} has been submitted.`,
+        ),
+      );
     } catch (e) {
       setVoteError(`Vote failed: ${e instanceof Error ? e.message : 'unknown error'}`);
     } finally {
@@ -268,8 +281,8 @@ export function ProposalDetail({ proposal: p, decimals, walletAddress, adminAddr
           >×</button>
         </div>
 
-        <h3 style={{ margin: '0 0 0.5rem' }}>{p.title}</h3>
-        <p style={{ color: '#555' }}>{p.description}</p>
+        <h3 style={{ margin: '0 0 0.5rem' }}>{safeTitle}</h3>
+        <p style={{ color: '#555' }}>{safeDescription}</p>
 
         {/* Discussion link — shown only when discussion_url is a valid HTTPS URL */}
         {p.discussion_url && /^https:\/\/.+/.test(p.discussion_url) && (
@@ -504,7 +517,7 @@ export function ProposalDetail({ proposal: p, decimals, walletAddress, adminAddr
                       aria-labelledby="choice-legend"
                       style={{ listStyle: 'none', padding: 0, margin: '0 0 0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}
                     >
-                      {(p.choices ?? []).map((choiceLabel, idx) => {
+                      {safeChoices.map((choiceLabel, idx) => {
                         const inputId = `choice-${String(p.id)}-${idx}`;
                         const isSelected = selectedChoiceIndex === idx;
                         return (

@@ -3,6 +3,7 @@ import { initErrorTracking, flushErrorTracking } from './errorTracking';
 import { createHealthServer } from './health';
 import { NotificationService } from './notificationService';
 import { logger } from './logger';
+import helmet from 'helmet';
 
 // Validate env vars before anything else — fails fast with a clear message.
 const env = loadEnv();
@@ -17,7 +18,19 @@ const service = new NotificationService({
   pollIntervalMs: env.POLL_INTERVAL_MS,
 });
 
-const healthServer = createHealthServer(() => service.checkReadiness());
+// Security headers middleware. Applied to every HTTP response.
+// HTTPS-only enforcement: HSTS (max-age=31536000) instructs browsers to
+// only use HTTPS for this host for one year. The API must be served over
+// TLS (terminated at the load balancer / reverse proxy) for HSTS to take
+// effect; plain-HTTP deployments should redirect to HTTPS upstream.
+const securityHeaders = helmet({
+  hsts: { maxAge: 31536000, includeSubDomains: true },
+  frameguard: { action: 'deny' },
+  noSniff: true,
+  referrerPolicy: { policy: 'strict-origin' },
+});
+
+const healthServer = createHealthServer(() => service.checkReadiness(), securityHeaders);
 const healthPort = env.HEALTH_PORT;
 healthServer.listen(healthPort, '0.0.0.0', () => {
   console.info(`[cosmosvote-backend] health endpoints listening on port ${healthPort}`);
