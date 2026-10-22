@@ -3,7 +3,7 @@ import { initErrorTracking, flushErrorTracking } from './errorTracking';
 import { createHealthServer } from './health';
 import { NotificationService } from './notificationService';
 import { logger } from './logger';
-import { auditLogger, recordAdminAction } from './auditLogger';
+import helmet from 'helmet';
 
 // Validate env vars before anything else — fails fast with a clear message.
 const env = loadEnv();
@@ -21,42 +21,19 @@ const service = new NotificationService({
   pollIntervalMs: env.POLL_INTERVAL_MS,
 });
 
-/**
- * Wrap an admin-level backend operation so that every invocation produces a
- * structured, append-only audit log entry containing timestamp, admin address,
- * action, proposal ID and outcome.
- */
-export async function runAdminOperation<T>(
-  adminAddress: string,
-  action: 'cancel' | 'execute' | 'pause' | 'transfer_admin',
-  proposalId: string | number | null,
-  operation: () => Promise<T>,
-): Promise<T> {
-  const timestamp = new Date().toISOString();
-  try {
-    const result = await operation();
-    await recordAdminAction({
-      timestamp,
-      adminAddress,
-      action,
-      proposalId,
-      outcome: 'success',
-    });
-    return result;
-  } catch (err) {
-    await recordAdminAction({
-      timestamp,
-      adminAddress,
-      action,
-      proposalId,
-      outcome: 'failure',
-      error: err instanceof Error ? err.message : String(err),
-    });
-    throw err;
-  }
-}
+// Security headers middleware. Applied to every HTTP response.
+// HTTPS-only enforcement: HSTS (max-age=31536000) instructs browsers to
+// only use HTTPS for this host for one year. The API must be served over
+// TLS (terminated at the load balancer / reverse proxy) for HSTS to take
+// effect; plain-HTTP deployments should redirect to HTTPS upstream.
+const securityHeaders = helmet({
+  hsts: { maxAge: 31536000, includeSubDomains: true },
+  frameguard: { action: 'deny' },
+  noSniff: true,
+  referrerPolicy: { policy: 'strict-origin' },
+});
 
-const healthServer = createHealthServer(() => service.checkReadiness());
+const healthServer = createHealthServer(() => service.checkReadiness(), securityHeaders);
 const healthPort = env.HEALTH_PORT;
 healthServer.listen(healthPort, '0.0.0.0', () => {
   console.info(`[cosmosvote-backend] health endpoints listening on port ${healthPort}`);

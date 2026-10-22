@@ -72,6 +72,14 @@ A lightweight backend that:
 2. Decodes emitted Soroban events (e.g., `proposal_created`, `vote_cast`, `proposal_finalized`).
 3. Dispatches notifications to configured channels (email, Discord webhook, push).
 
+> **Webhook signing:** Every webhook delivery is signed with HMAC-SHA256 using a
+> shared secret and carries the signature in the `X-CosmosVote-Signature` header.
+> Each delivery also includes a timestamp header so subscribers can reject
+> replayed requests. Subscribers must verify the signature before acting on a
+> delivery. See
+> [`docs/notification-service.md`](./notification-service.md#verifying-webhook-signatures)
+> for the verification algorithm, a code example, and the key rotation procedure.
+
 ### Smart Contracts (Soroban)
 - **Governance Contract** — manages proposals, votes, finalization, and execution.
 - **Token Contract (VOTE)** — SEP-41 token; vote weight derived from balance at vote time.

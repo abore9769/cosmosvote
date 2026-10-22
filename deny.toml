@@ -1,9 +1,15 @@
 # cargo-deny configuration for CosmosVote
 # Docs: https://embarkstudios.github.io/cargo-deny/
+#
+# License policy: only permissive licenses are allowed. Copyleft licenses
+# (GPL, AGPL, LGPL, EUPL, SSPL, BUSL, etc.) are explicitly denied because
+# distributing the contract binary under copyleft terms would create legal
+# issues. See CONTRIBUTING.md for the full policy.
 
 [licenses]
 # Deny any license not in the allow list.
 unlicensed = "deny"
+# Allow list contains only permissive licenses.
 allow = [
   "Apache-2.0",
   "MIT",
@@ -15,9 +21,12 @@ allow = [
   "CC0-1.0",
   "Zlib",
 ]
+# Explicitly block copyleft licenses.
 deny = [
+  "GPL-1.0",
   "GPL-2.0",
   "GPL-3.0",
+  "AGPL-1.0",
   "AGPL-3.0",
   "LGPL-2.0",
   "LGPL-2.1",
@@ -26,11 +35,16 @@ deny = [
   "EUPL-1.2",
   "SSPL-1.0",
   "BUSL-1.1",
+  "OSL-3.0",
+  "CPL-1.0",
+  "MPL-2.0",
 ]
 # Treat dual-licensed crates (e.g. MIT OR Apache-2.0) as allowed if either
 # option is in the allow list.
 allow-osi-fsf-free = "neither"
+# Deny any copyleft-licensed crate.
 copyleft = "deny"
+# Deny any license not explicitly allowed.
 default = "deny"
 
 [bans]

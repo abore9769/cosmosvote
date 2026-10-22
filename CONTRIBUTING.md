@@ -123,7 +123,14 @@ To configure these rules via GitHub repository settings:
 
 ## License Compliance
 
-CosmosVote is Apache 2.0 licensed. All dependencies must use compatible permissive licenses. CI enforces this automatically on every PR.
+CosmosVote is licensed under **Apache 2.0**. Because the contract binary is compiled to WASM and distributed, every dependency (Rust crates and npm packages) must be compatible with Apache 2.0.
+
+### License policy
+
+- **Only permissive licenses are allowed.** See the allowlist below.
+- **Copyleft licenses are blocked.** GPL-2.0, GPL-3.0, AGPL-3.0, LGPL-2.0, LGPL-2.1, LGPL-3.0, and other copyleft licenses (EUPL, SSPL, BUSL, etc.) are explicitly denied in `deny.toml` and in the frontend `license-check` script. These licenses could impose source-disclosure obligations on the distributed contract binary, so they must never be introduced.
+- **Unknown or unlicensed dependencies are treated as violations.** A dependency whose license cannot be determined fails the check.
+- **CI enforces this policy on every PR.** The Rust dependency graph is checked with [`cargo-deny`](https://embarkstudios.github.io/cargo-deny/) (`cargo deny check licenses`, configured in `deny.toml`), and the frontend dependency graph is checked with the `license-check` script in `frontend/package.json`. A PR that introduces a denied or unlisted license will fail CI and cannot be merged.
 
 ### Allowed licenses
 
@@ -141,13 +148,14 @@ CosmosVote is Apache 2.0 licensed. All dependencies must use compatible permissi
 
 ### Denied licenses
 
-GPL-2.0, GPL-3.0, AGPL-3.0, LGPL-2.0, LGPL-2.1, LGPL-3.0, EUPL-1.1, EUPL-1.2, SSPL-1.0, BUSL-1.1 — and any unknown or unlicensed dependency.
+GPL-2.0, GPL-3.0, AGPL-3.0, LGPL-2.0, LGPL-2.1, LGPL-3.0, EUPL-1.1, EUPL-1.2, SSPL-1.0, BUSL-1.1 — and any unknown or unlicensed dependency. These are blocked explicitly in `deny.toml` (Rust) and excluded from `--onlyAllow` in the frontend `license-check` script.
 
 ### Adding a dependency with an unlisted license
 
-1. Verify the license is permissive and compatible with Apache 2.0.
+1. Verify the license is permissive and compatible with Apache 2.0 (and is **not** a copyleft license).
 2. Add it to the `allow` list in `deny.toml` (Rust) or to `--onlyAllow` in the `license-check` script in `frontend/package.json`.
-3. Add a note in your PR explaining the addition.
+3. Run the checks locally (see below) to confirm there are no violations.
+4. Add a note in your PR explaining the addition and why the license is compatible.
 
 ### Running checks locally
 

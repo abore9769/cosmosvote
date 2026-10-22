@@ -9,6 +9,9 @@
 //! 1. Malicious token re-enters `cast_vote` during `balance_at` → attack fails
 //! 2. Malicious token re-enters `finalise` during `total_supply` → attack fails
 //! 3. Governance state is intact and usable after all attack attempts
+//! 4. Governance executes a `TreasuryAction` and disburses XLM from treasury
+//! 5. Governance executes a `TreasuryAction` and disburses a SEP-41 token
+//! 6. Non-governance callers cannot disburse treasury funds
 
 #![cfg(test)]
 
@@ -240,75 +243,195 @@ fn test_reentrant_finalise_is_blocked() {
     let gov = GovernanceContractClient::new(&env, &gov_id);
     gov.initialize(&admin, &token_id, &0i128, &0u64, &0u32, &false, &None, &0u32);
 
-    // Wire up malicious token to governance
+    // Wire up the malicious token to point back at governance
     fstore_gov(&env, &gov_id);
 
     let proposal_id = make_proposal(&gov, &env, &voter);
     fstore_proposal_id(&env, proposal_id);
 
-    // Cast votes so the proposal can be finalised
+    // Cast a vote so the proposal can be finalised
     gov.cast_vote(&voter, &proposal_id, &Vote::Yes);
 
-    // Advance time past voting period
-    env.ledger().set_timestamp(env.ledger().timestamp() + 604_801);
+    // Advance past the voting period so finalise is allowed
+    env.ledger().with_mut(|l| {
+        l.timestamp += 604_801u64;
+    });
 
-    // finalise calls total_supply on the token; the token tries to re-enter finalise
+    // finalise triggers total_supply on the malicious token, which tries to re-enter finalise
     gov.finalise(&proposal_id);
 
-    // The outer finalise succeeded
-    let proposal = gov.get_proposal(&proposal_id);
-    assert_eq!(
-        proposal.state,
-        ProposalState::Passed,
-        "proposal should be finalised as Passed"
-    );
-
-    // The reentrant attempt must not have succeeded (proposal was already non-Active)
+    // The reentrant attempt must not have succeeded
     assert!(
         !fload_attack_succeeded(&env),
         "reentrant finalise during total_supply must be blocked"
     );
+
+    // Governance state remains usable
+    let proposal = gov.get_proposal(&proposal_id);
+    assert_eq!(proposal.state, ProposalState::Passed);
 }
 
 // ---------------------------------------------------------------------------
-// Test 3: Governance is fully operational after all attack attempts
+// Governance + Treasury cross-contract interaction tests
+// ---------------------------------------------------------------------------
+
+use cosmosvote_treasury::{TreasuryContract, TreasuryContractClient};
+use crate::types::TreasuryAction;
+
+/// Deploy governance, token, and treasury wired together, returning their clients.
+fn setup_gov_treasury(
+    env: &Env,
+) -> (
+    GovernanceContractClient<'static>,
+    TokenContractClient<'static>,
+    TreasuryContractClient<'static>,
+    Address,
+    Address,
+) {
+    let admin = Address::generate(env);
+    let voter = Address::generate(env);
+
+    // SEP-41 token used for voting weight and token disbursements
+    let token_id = env.register(TokenContract, ());
+    let token = TokenContractClient::new(env, &token_id);
+    token.initialize(&admin, &String::from_str(env, "Vote"), &String::from_str(env, "VOTE"), &7u32);
+    token.mint(&voter, &1_000_000i128);
+
+    // Treasury owned by governance
+    let treasury_id = env.register(TreasuryContract, ());
+    let treasury = TreasuryContractClient::new(env, &treasury_id);
+
+    // Governance contract
+    let gov_id = env.register(GovernanceContract, ());
+    let gov = GovernanceContractClient::new(env, &gov_id);
+
+    // Treasury must recognise governance as its authorised executor
+    treasury.initialize(&admin, &gov_id);
+
+    gov.initialize(&admin, &token_id, &0i128, &0u64, &0u32, &false, &None, &0u32);
+
+    (gov, token, treasury, voter, treasury_id)
+}
+
+/// Create, pass, and execute a proposal carrying a TreasuryAction.
+fn pass_and_execute(
+    env: &Env,
+    gov: &GovernanceContractClient,
+    voter: &Address,
+    action: &TreasuryAction,
+) -> u64 {
+    let proposal_id = gov.create_proposal(
+        voter,
+        &String::from_str(env, "Treasury Disbursement"),
+        &String::from_str(env, "Disburse funds"),
+        &1_000_000i128,
+        &604_800u64,
+        &None,
+        &Some(action.clone()),
+    );
+
+    gov.cast_vote(voter, &proposal_id, &Vote::Yes);
+
+    env.ledger().with_mut(|l| {
+        l.timestamp += 604_801u64;
+    });
+
+    gov.finalise(&proposal_id);
+    gov.execute(&proposal_id);
+
+    proposal_id
+}
+
+// ---------------------------------------------------------------------------
+// Test 3: XLM disbursement via governance execution
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_governance_intact_after_attack_attempts() {
+fn test_governance_executes_xlm_disbursement() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let admin = Address::generate(&env);
-    let voter = Address::generate(&env);
+    let (gov, _token, treasury, voter, _treasury_id) = setup_gov_treasury(&env);
 
-    // Use the real token — verify governance works normally after attacks above
-    let token_id = env.register(TokenContract, ());
-    let token = TokenContractClient::new(&env, &token_id);
-    token.initialize(
-        &admin,
-        &1_000_000_000i128,
-        &String::from_str(&env, "CosmosVote"),
-        &String::from_str(&env, "VOTE"),
-        &7u32,
-    );
-    token.mint(&admin, &voter, &10_000_000i128);
+    let recipient = Address::generate(&env);
+    let amount = 500_000i128;
 
-    let gov_id = env.register(GovernanceContract, ());
-    let gov = GovernanceContractClient::new(&env, &gov_id);
-    gov.initialize(&admin, &token_id, &0i128, &0u64, &0u32, &false, &None, &0u32);
+    // Fund the treasury with XLM
+    treasury.deposit_xlm(&voter, &amount);
+    assert_eq!(treasury.get_xlm_balance(), amount);
 
-    // Normal proposal lifecycle completes without issue
-    let proposal_id = make_proposal(&gov, &env, &voter);
-    gov.cast_vote(&voter, &proposal_id, &Vote::Yes);
+    let action = TreasuryAction::DisburseXlm {
+        recipient: recipient.clone(),
+        amount,
+    };
 
-    env.ledger().set_timestamp(env.ledger().timestamp() + 604_801);
-    gov.finalise(&proposal_id);
+    let proposal_id = pass_and_execute(&env, &gov, &voter, &action);
 
-    let proposal = gov.get_proposal(&proposal_id);
-    assert_eq!(proposal.state, ProposalState::Passed);
-
-    gov.execute(&admin, &proposal_id);
+    // Proposal executed successfully
     let proposal = gov.get_proposal(&proposal_id);
     assert_eq!(proposal.state, ProposalState::Executed);
+
+    // Treasury disbursement occurred
+    assert_eq!(treasury.get_xlm_balance(), 0i128, "treasury XLM should be drained");
+    assert_eq!(treasury.get_xlm_disbursed(&recipient), amount, "recipient should receive XLM");
+}
+
+// ---------------------------------------------------------------------------
+// Test 4: SEP-41 token disbursement via governance execution
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_governance_executes_token_disbursement() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (gov, token, treasury, voter, _treasury_id) = setup_gov_treasury(&env);
+
+    let recipient = Address::generate(&env);
+    let amount = 250_000i128;
+
+    // Fund the treasury with SEP-41 tokens
+    token.transfer(&voter, &treasury.address, &amount);
+    assert_eq!(token.balance(&treasury.address), amount);
+
+    let action = TreasuryAction::DisburseToken {
+        token: token.address.clone(),
+        recipient: recipient.clone(),
+        amount,
+    };
+
+    let proposal_id = pass_and_execute(&env, &gov, &voter, &action);
+
+    let proposal = gov.get_proposal(&proposal_id);
+    assert_eq!(proposal.state, ProposalState::Executed);
+
+    // Treasury disbursement occurred
+    assert_eq!(token.balance(&treasury.address), 0i128, "treasury token balance should be drained");
+    assert_eq!(token.balance(&recipient), amount, "recipient should receive tokens");
+}
+
+// ---------------------------------------------------------------------------
+// Test 5: Non-governance caller cannot disburse treasury funds
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_unauthorized_disbursement_is_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_gov, _token, treasury, voter, _treasury_id) = setup_gov_treasury(&env);
+
+    let attacker = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let amount = 100_000i128;
+
+    treasury.deposit_xlm(&voter, &amount);
+
+    // A non-governance caller attempts to disburse directly
+    let result = treasury.try_disburse_xlm(&attacker, &recipient, &amount);
+    assert!(result.is_err(), "non-governance caller must not disburse treasury funds");
+
+    // Treasury balance is untouched
+    assert_eq!(treasury.get_xlm_balance(), amount);
+    assert_eq!(treasury.get_xlm_disbursed(&recipient), 0i128);
 }

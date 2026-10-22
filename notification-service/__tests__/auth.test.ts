@@ -8,6 +8,8 @@
 
 // We import the functions directly so no HTTP framework is needed.
 import { resolveRole, hasRole, requireRole } from '../src/auth';
+import { createHmac } from 'crypto';
+import { signWebhookPayload, verifyWebhookSignature } from '../src/webhook-signing';
 
 // ---------------------------------------------------------------------------
 // resolveRole
@@ -121,5 +123,74 @@ describe('requireRole', () => {
   it('throws Unauthorized for unknown token', () => {
     const { requireRole: rr } = require('../src/auth');
     expect(() => rr('Bearer garbage', 'viewer')).toThrow('Unauthorized');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// webhook signing (Issue #124)
+// ---------------------------------------------------------------------------
+
+describe('signWebhookPayload', () => {
+  const secret = 'test-webhook-secret';
+  const body = JSON.stringify({ event: 'vote.created', id: 'abc123' });
+
+  it('produces an HMAC-SHA256 signature matching an independent computation', () => {
+    const { signature } = signWebhookPayload(body, secret);
+    const expected = createHmac('sha256', secret).update(body).digest('hex');
+    expect(signature).toBe(expected);
+  });
+
+  it('includes a timestamp header value that is recent', () => {
+    const before = Math.floor(Date.now() / 1000);
+    const { timestamp } = signWebhookPayload(body, secret);
+    const after = Math.floor(Date.now() / 1000);
+    expect(typeof timestamp).toBe('number');
+    expect(timestamp).toBeGreaterThanOrEqual(before);
+    expect(timestamp).toBeLessThanOrEqual(after);
+  });
+
+  it('produces different signatures for different payloads', () => {
+    const a = signWebhookPayload(body, secret).signature;
+    const b = signWebhookPayload(body + 'x', secret).signature;
+    expect(a).not.toBe(b);
+  });
+
+  it('produces different signatures for different secrets', () => {
+    const a = signWebhookPayload(body, secret).signature;
+    const b = signWebhookPayload(body, 'other-secret').signature;
+    expect(a).not.toBe(b);
+  });
+});
+
+describe('verifyWebhookSignature', () => {
+  const secret = 'test-webhook-secret';
+  const body = JSON.stringify({ event: 'vote.created', id: 'abc123' });
+
+  it('accepts a valid signature with a fresh timestamp', () => {
+    const { signature, timestamp } = signWebhookPayload(body, secret);
+    expect(verifyWebhookSignature(body, signature, timestamp, secret)).toBe(true);
+  });
+
+  it('rejects a tampered payload', () => {
+    const { signature, timestamp } = signWebhookPayload(body, secret);
+    expect(verifyWebhookSignature(body + 'tampered', signature, timestamp, secret)).toBe(false);
+  });
+
+  it('rejects a signature made with a different secret', () => {
+    const { signature, timestamp } = signWebhookPayload(body, 'wrong-secret');
+    expect(verifyWebhookSignature(body, signature, timestamp, secret)).toBe(false);
+  });
+
+  it('rejects a stale timestamp (replay protection)', () => {
+    const staleTimestamp = Math.floor(Date.now() / 1000) - 600; // 10 minutes old
+    const signature = createHmac('sha256', secret)
+      .update(`${staleTimestamp}.${body}`)
+      .digest('hex');
+    expect(verifyWebhookSignature(body, signature, staleTimestamp, secret)).toBe(false);
+  });
+
+  it('rejects a missing signature', () => {
+    const { timestamp } = signWebhookPayload(body, secret);
+    expect(verifyWebhookSignature(body, undefined as any, timestamp, secret)).toBe(false);
   });
 });
