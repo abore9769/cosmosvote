@@ -224,3 +224,87 @@ jobs:
         run: npm ci
       - name: Run coverage (fail below threshold)
         run: npm run coverage
+
+  # ─── Failure Notification ──────────────────────────────────────────────────
+  # Sends a Slack/Discord alert when any CI job fails on main or develop.
+  # Configure the webhook URL as a repository secret named CI_ALERT_WEBHOOK_URL.
+  # Success notifications are off by default (set NOTIFY_ON_SUCCESS=true to enable).
+  notify:
+    name: Notify on Failure
+    runs-on: ubuntu-latest
+    needs:
+      - fmt
+      - lint
+      - test
+      - benchmark
+      - build
+      - deployment-tooling
+      - license-check
+      - coverage
+      - actionlint
+      - frontend-coverage
+    if: ${{ always() && github.event_name == 'push' && contains(fromJson('["main", "develop"]'), github.ref_name) }}
+    env:
+      CI_ALERT_WEBHOOK_URL: ${{ secrets.CI_ALERT_WEBHOOK_URL }}
+    steps:
+      - name: Determine which jobs failed
+        id: check
+        run: |
+          FAILED_JOBS=""
+          for job_result in \
+            "Formatting:${{ needs.fmt.result }}" \
+            "Clippy:${{ needs.lint.result }}" \
+            "Tests:${{ needs.test.result }}" \
+            "Instruction Count Benchmarks:${{ needs.benchmark.result }}" \
+            "Build WASM:${{ needs.build.result }}" \
+            "Deployment Tooling Checks:${{ needs.deployment-tooling.result }}" \
+            "License Compliance:${{ needs.license-check.result }}" \
+            "Contract Coverage:${{ needs.coverage.result }}" \
+            "Lint GitHub Actions:${{ needs.actionlint.result }}" \
+            "Frontend Coverage:${{ needs.frontend-coverage.result }}"; do
+            name="${job_result%%:*}"
+            result="${job_result##*:}"
+            if [[ "$result" == "failure" ]]; then
+              if [[ -n "$FAILED_JOBS" ]]; then
+                FAILED_JOBS="${FAILED_JOBS}, ${name}"
+              else
+                FAILED_JOBS="${name}"
+              fi
+            fi
+          done
+          echo "failed_jobs=$FAILED_JOBS" >> "$GITHUB_OUTPUT"
+          if [[ -n "$FAILED_JOBS" ]]; then
+            echo "any_failure=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "any_failure=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Send Slack/Discord alert on failure
+        if: steps.check.outputs.any_failure == 'true' && env.CI_ALERT_WEBHOOK_URL != ''
+        run: |
+          COMMIT_SHA="${{ github.sha }}"
+          SHORT_SHA="${COMMIT_SHA:0:7}"
+          BRANCH="${{ github.ref_name }}"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          FAILED_JOBS="${{ steps.check.outputs.failed_jobs }}"
+
+          PAYLOAD=$(cat <<EOF
+          {
+            "text": "🚨 CI Failure on *${BRANCH}*\n\n*Commit:* ${SHORT_SHA} (${COMMIT_SHA})\n*Failing job(s):* ${FAILED_JOBS}\n*Run:* ${RUN_URL}\n\nPlease investigate and fix."
+          }
+          EOF
+          )
+
+          echo "Sending CI failure alert to webhook..."
+          curl -sS -X POST \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "$CI_ALERT_WEBHOOK_URL" \
+            -w "\nHTTP_STATUS: %{http_code}\n"
+
+      - name: Skip notification (no webhook configured)
+        if: steps.check.outputs.any_failure == 'true' && env.CI_ALERT_WEBHOOK_URL == ''
+        run: |
+          echo "⚠️  CI_ALERT_WEBHOOK_URL secret is not configured."
+          echo "    To enable Slack/Discord alerts, add the webhook URL as a repository secret."
+          echo "    Failing job(s): ${{ steps.check.outputs.failed_jobs }}"
