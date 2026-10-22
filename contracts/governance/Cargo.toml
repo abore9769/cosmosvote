@@ -14,6 +14,10 @@ crate-type = ["cdylib", "rlib"]
 name = "delegation_vote_weight_tests"
 path = "../../tests/delegation_vote_weight_tests.rs"
 
+[[test]]
+name = "governance_treasury_cross_contract_tests"
+path = "../../tests/governance_treasury_cross_contract_tests.rs"
+
 [dependencies]
 soroban-sdk = { version = "26.1.0" }
 
@@ -21,6 +25,7 @@ soroban-sdk = { version = "26.1.0" }
 soroban-sdk = { version = "26.1.0", features = ["testutils"] }
 proptest = "1.6.0"
 cosmosvote-token = { path = "../token", features = ["testutils"] }
+cosmosvote-treasury = { path = "../treasury", features = ["testutils"] }
 
 [features]
 testutils = ["soroban-sdk/testutils"]

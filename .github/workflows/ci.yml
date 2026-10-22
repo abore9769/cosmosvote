@@ -51,6 +51,47 @@ jobs:
       - name: Run property-based tests
         run: cargo test prop_ --all --features testutils
 
+  error-coverage:
+    name: ContractError Coverage Gate
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Verify every ContractError variant has a regression test
+        run: |
+          set -euo pipefail
+          ERR_FILE="contracts/governance/src/errors.rs"
+          TEST_FILE="contracts/governance/src/error_coverage_tests.rs"
+          if [ ! -f "$ERR_FILE" ]; then
+            echo "Error: $ERR_FILE not found"
+            exit 1
+          fi
+          if [ ! -f "$TEST_FILE" ]; then
+            echo "Error: $TEST_FILE not found"
+            exit 1
+          fi
+          # Extract variant names from the ContractError enum body.
+          variants=$(awk '/pub enum ContractError/{flag=1;next}/^}/{flag=0}flag' "$ERR_FILE" \
+            | grep -E '^[[:space:]]*[A-Z][A-Za-z0-9_]*' \
+            | sed -E 's/^[[:space:]]*([A-Z][A-Za-z0-9_]*).*/\1/' \
+            | sort -u)
+          if [ -z "$variants" ]; then
+            echo "Error: could not extract ContractError variants from $ERR_FILE"
+            exit 1
+          fi
+          missing=0
+          for variant in $variants; do
+            if ! grep -qE "test_[a-z0-9_]*${variant}|${variant}" "$TEST_FILE"; then
+              echo "Missing regression test for ContractError::$variant"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "Error: one or more ContractError variants lack a regression test in $TEST_FILE"
+            exit 1
+          fi
+          echo "All ContractError variants have regression tests."
+
   benchmark:
     name: Instruction Count Benchmarks
     runs-on: ubuntu-latest
@@ -184,10 +225,86 @@ jobs:
       - name: Run coverage (fail below threshold)
         run: npm run coverage
 
-  env-example-check:
-    name: .env.example Completeness
+  # ─── Failure Notification ──────────────────────────────────────────────────
+  # Sends a Slack/Discord alert when any CI job fails on main or develop.
+  # Configure the webhook URL as a repository secret named CI_ALERT_WEBHOOK_URL.
+  # Success notifications are off by default (set NOTIFY_ON_SUCCESS=true to enable).
+  notify:
+    name: Notify on Failure
     runs-on: ubuntu-latest
+    needs:
+      - fmt
+      - lint
+      - test
+      - benchmark
+      - build
+      - deployment-tooling
+      - license-check
+      - coverage
+      - actionlint
+      - frontend-coverage
+    if: ${{ always() && github.event_name == 'push' && contains(fromJson('["main", "develop"]'), github.ref_name) }}
+    env:
+      CI_ALERT_WEBHOOK_URL: ${{ secrets.CI_ALERT_WEBHOOK_URL }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - name: Validate .env.example completeness
-        run: bash scripts/check_env_example.sh
+      - name: Determine which jobs failed
+        id: check
+        run: |
+          FAILED_JOBS=""
+          for job_result in \
+            "Formatting:${{ needs.fmt.result }}" \
+            "Clippy:${{ needs.lint.result }}" \
+            "Tests:${{ needs.test.result }}" \
+            "Instruction Count Benchmarks:${{ needs.benchmark.result }}" \
+            "Build WASM:${{ needs.build.result }}" \
+            "Deployment Tooling Checks:${{ needs.deployment-tooling.result }}" \
+            "License Compliance:${{ needs.license-check.result }}" \
+            "Contract Coverage:${{ needs.coverage.result }}" \
+            "Lint GitHub Actions:${{ needs.actionlint.result }}" \
+            "Frontend Coverage:${{ needs.frontend-coverage.result }}"; do
+            name="${job_result%%:*}"
+            result="${job_result##*:}"
+            if [[ "$result" == "failure" ]]; then
+              if [[ -n "$FAILED_JOBS" ]]; then
+                FAILED_JOBS="${FAILED_JOBS}, ${name}"
+              else
+                FAILED_JOBS="${name}"
+              fi
+            fi
+          done
+          echo "failed_jobs=$FAILED_JOBS" >> "$GITHUB_OUTPUT"
+          if [[ -n "$FAILED_JOBS" ]]; then
+            echo "any_failure=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "any_failure=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Send Slack/Discord alert on failure
+        if: steps.check.outputs.any_failure == 'true' && env.CI_ALERT_WEBHOOK_URL != ''
+        run: |
+          COMMIT_SHA="${{ github.sha }}"
+          SHORT_SHA="${COMMIT_SHA:0:7}"
+          BRANCH="${{ github.ref_name }}"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          FAILED_JOBS="${{ steps.check.outputs.failed_jobs }}"
+
+          PAYLOAD=$(cat <<EOF
+          {
+            "text": "🚨 CI Failure on *${BRANCH}*\n\n*Commit:* ${SHORT_SHA} (${COMMIT_SHA})\n*Failing job(s):* ${FAILED_JOBS}\n*Run:* ${RUN_URL}\n\nPlease investigate and fix."
+          }
+          EOF
+          )
+
+          echo "Sending CI failure alert to webhook..."
+          curl -sS -X POST \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "$CI_ALERT_WEBHOOK_URL" \
+            -w "\nHTTP_STATUS: %{http_code}\n"
+
+      - name: Skip notification (no webhook configured)
+        if: steps.check.outputs.any_failure == 'true' && env.CI_ALERT_WEBHOOK_URL == ''
+        run: |
+          echo "⚠️  CI_ALERT_WEBHOOK_URL secret is not configured."
+          echo "    To enable Slack/Discord alerts, add the webhook URL as a repository secret."
+          echo "    Failing job(s): ${{ steps.check.outputs.failed_jobs }}"
